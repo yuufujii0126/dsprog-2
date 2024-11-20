@@ -1,0 +1,259 @@
+Metadata-Version: 2.1
+Name: fret
+Version: 0.3.5
+Summary: Framework for Reproducible ExperimenTs.
+Home-page: https://github.com/yxonic/fret
+Author: yxonic
+Author-email: yxonic@gmail.com
+License: MIT
+Platform: any
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Intended Audience :: Science/Research
+Requires-Python: >=3.4
+Description-Content-Type: text/markdown
+Requires-Dist: toml
+Provides-Extra: dev
+Requires-Dist: pytest (>=4.6.0) ; extra == 'dev'
+Requires-Dist: pytest-cov (>=2.6.0) ; extra == 'dev'
+Requires-Dist: pytest-flake8 (>=1) ; extra == 'dev'
+Requires-Dist: sphinx ; extra == 'dev'
+Requires-Dist: sphinx-rtd-theme ; extra == 'dev'
+Requires-Dist: recommonmark ; extra == 'dev'
+Requires-Dist: setuptools (>=40) ; extra == 'dev'
+Requires-Dist: wheel ; extra == 'dev'
+Provides-Extra: doc
+Requires-Dist: sphinx ; extra == 'doc'
+Requires-Dist: sphinx-rtd-theme ; extra == 'doc'
+Requires-Dist: recommonmark ; extra == 'doc'
+Provides-Extra: test
+Requires-Dist: pytest (>=4.6.0) ; extra == 'test'
+Requires-Dist: pytest-cov (>=2.6.0) ; extra == 'test'
+Requires-Dist: pytest-flake8 (>=1) ; extra == 'test'
+
+# fret
+
+[![Travis (.org)](https://img.shields.io/travis/com/yxonic/fret)](https://travis-ci.org/github/yxonic/fret/)
+[![Codecov](https://img.shields.io/codecov/c/github/yxonic/fret)](https://codecov.io/gh/yxonic/fret/)
+[![Documentation Status](https://readthedocs.org/projects/fret/badge/?version=latest)](https://fret.readthedocs.io/en/latest/?badge=latest)
+[![PyPI](https://img.shields.io/pypi/v/fret.svg)](https://pypi.python.org/pypi/fret)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/fret.svg)](https://pypi.python.org/pypi/fret)
+
+Framework for Reproducible ExperimenTs. Read on for a quick guide. Full documentation [here](https://fret.readthedocs.io/en/latest/).
+
+## Installation
+From pip:
+```sh
+pip install fret
+```
+
+From source: clone the repository and then run: `python setup.py install`.
+
+## Tutorial
+
+### Basic Usage
+
+Create a file named `app.py` with content:
+```python
+import fret
+
+@fret.command
+def run(ws):
+    model = ws.build()
+    print(model)
+
+@fret.configurable
+class Model:
+    def __init__(self, x=3, y=4):
+        ...
+```
+
+Then under the same directory, you can run: 
+```sh
+$ fret config Model
+[ws/_default] configured "main" as "Model" with: x=3, y=4
+$ fret run
+Model(x=3, y=4)
+$ fret config Model -x 5 -y 10
+[ws/_default] configured "main" as "Model" with: x=5, y=10
+$ fret run
+Model(x=5, y=10)
+```
+
+### Using Workspace
+
+You can specify different configuration in different workspace:
+```sh
+$ fret -w ws/model1 config Model
+[ws/model1] configured "main" as "Model" with: x=3, y=4
+$ fret -w ws/model2 config Model -x 5 -y 10
+[ws/model2] configured "main" as "Model" with: x=5, y=10
+$ fret -w ws/model1 run
+Model(x=3, y=4)
+$ fret -w ws/model2 run
+Model(x=5, y=10)
+```
+
+### Save/Load
+
+```python
+import fret
+
+@fret.command
+def train(ws):
+    model = ws.build()
+    model.train()
+    ws.save(model, 'trained')
+
+@fret.command
+def test(ws):
+    model = ws.load('ws/best/snapshot/main.trained.pt')
+    print(model.weight)
+
+@fret.configurable(states=['weight'])
+class Model:
+    def __init__(self):
+        self.weight = 0
+    def train(self):
+        self.weight = 23
+```
+
+```sh
+$ fret -w ws/best config Model
+[ws/_default] configured "main" as "Model"
+$ fret -w ws/best train
+$ fret test
+23
+```
+
+### An Advanced Workflow
+
+In `app.py`:
+```python
+import time
+import fret
+
+@fret.configurable(states=['value'])
+class Model:
+    def __init__(self):
+        self.value = 0
+
+@fret.command
+def resumable(ws):
+    model = ws.build()
+    with ws.run('exp-1') as run:
+        run.register(model)
+        cnt = run.acc()
+        for e in fret.nonbreak(run.range(5)):
+            # with `nonbreak`, the program always finish this loop before exit
+            model.value += e
+            time.sleep(0.5)
+            cnt += 1
+            print('current epoch: %d, sum: %d, cnt: %d' %
+                  (e, model.value, cnt))
+```
+
+Then you can stop and restart this program anytime, with consistent results:
+```sh
+$ fret resumable
+current epoch: 0, sum: 0, cnt: 1
+current epoch: 1, sum: 1, cnt: 2
+^CW SIGINT received. Delaying KeyboardInterrupt.
+current epoch: 2, sum: 3, cnt: 3
+Traceback (most recent call last):
+    ...
+KeyboardInterrupt
+W cancelled by user
+$ fret resumable
+current epoch: 3, sum: 6, cnt: 4
+current epoch: 4, sum: 10, cnt: 5
+```
+
+### Dynamic commands
+
+You can specify commands inside configurables, and run them depending on current workspace setup:
+
+```python
+import fret
+
+@fret.configurable
+class App1:
+    @fret.command
+    def check(self):
+        print('running check from App1')
+
+@fret.configurable
+class App2:
+    @fret.command
+    def check(self, msg):
+        print('running check from App2 with message: ' + msg)
+```
+
+Then run:
+
+```sh
+$ fret config App1
+[ws/_default] configured "main" as "App1"
+$ fret check
+running check from App1
+$ fret config App2
+[ws/_default] configured "main" as "App2"
+$ fret check -m hello
+running check from App2 with message: hello
+```
+
+### Submodule
+
+```python
+@fret.configurable
+class A:
+    def __init__(self, foo):
+        ...
+
+@fret.configurable(submodules=['sub'], build_subs=False)
+class B:
+    def __init__(self, sub, bar=3):
+        self.sub = sub(foo='bar')   # call sub to build submodule
+```
+
+```sh
+$ fret config sub A
+[ws/_default] configured "sub" as "A"
+$ fret config B
+[ws/_default] configured "main" as "B" with: sub='sub', bar=3
+$ fret run
+B(sub=A(), bar=3)
+```
+
+### Inheritance
+
+```python
+@fret.configurable
+class A:
+    def __init__(self, foo='bar', sth=3):
+        ...
+
+@fret.configurable
+class B(A):
+    def __init__(self, bar=3, **others):
+        super().__init__(**others)
+        ...
+```
+
+```sh
+$ fret config B -foo baz -bar 0
+[ws/_default] configured "main" as "B" with: bar=0, foo='baz', sth=3
+$ fret run
+B(bar=0, foo='baz', sth=3)
+```
+
+### Internals
+
+```python
+>>> config = fret.Configuration({'foo': 'bar'})
+>>> config
+foo='bar'
+```
+
+
