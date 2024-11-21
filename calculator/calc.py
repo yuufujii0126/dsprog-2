@@ -1,4 +1,4 @@
-# fletをインポート
+import math
 import flet as ft
 
 
@@ -33,7 +33,6 @@ class ExtraActionButton(CalcButton):
 
 
 class CalculatorApp(ft.Container):
-    # application's root control (i.e. "view") containing all other controls
     def __init__(self):
         super().__init__()
         self.reset()
@@ -91,6 +90,25 @@ class CalculatorApp(ft.Container):
                         ActionButton(text="=", button_clicked=self.button_clicked),
                     ]
                 ),
+                ft.Row(
+                    controls=[
+                        ExtraActionButton(
+                            text="sin", button_clicked=self.button_clicked
+                        ),
+                        ExtraActionButton(
+                            text="cos", button_clicked=self.button_clicked
+                        ),
+                        ExtraActionButton(
+                            text="tan", button_clicked=self.button_clicked
+                        ),
+                        ExtraActionButton(
+                            text="log", button_clicked=self.button_clicked
+                        ),
+                        ExtraActionButton(
+                            text="π", button_clicked=self.button_clicked
+                        ),
+                    ]
+                ),
             ]
         )
 
@@ -132,11 +150,41 @@ class CalculatorApp(ft.Container):
         elif data in ("+/-"):
             if float(self.result.value) > 0:
                 self.result.value = "-" + str(self.result.value)
-
             elif float(self.result.value) < 0:
                 self.result.value = str(
                     self.format_number(abs(float(self.result.value)))
                 )
+
+        elif data == "sin":
+            self.result.value = self.format_number(
+                math.sin(math.radians(float(self.result.value)))
+            )
+            self.reset()
+
+        elif data == "cos":
+            self.result.value = self.format_number(
+                math.cos(math.radians(float(self.result.value)))
+            )
+            self.reset()
+
+        elif data == "tan":
+            angle = float(self.result.value)
+            if angle % 180 == 90:  # tanが定義されない値
+                self.result.value = "Error"
+            else:
+                self.result.value = self.format_number(math.tan(math.radians(angle)))
+            self.reset()
+
+        elif data == "log":
+            if float(self.result.value) <= 0:
+                self.result.value = "Error"  # 負または0の対数は計算不可
+            else:
+                self.result.value = self.format_number(math.log10(float(self.result.value)))
+            self.reset()
+
+        elif data == "π":
+            self.result.value = self.format_number(math.pi)
+            self.new_operand = True
 
         self.update()
 
@@ -147,16 +195,12 @@ class CalculatorApp(ft.Container):
             return num
 
     def calculate(self, operand1, operand2, operator):
-
         if operator == "+":
             return self.format_number(operand1 + operand2)
-
         elif operator == "-":
             return self.format_number(operand1 - operand2)
-
         elif operator == "*":
             return self.format_number(operand1 * operand2)
-
         elif operator == "/":
             if operand2 == 0:
                 return "Error"
@@ -171,10 +215,7 @@ class CalculatorApp(ft.Container):
 
 def main(page: ft.Page):
     page.title = "Calc App"
-    # create application instance
     calc = CalculatorApp()
-
-    # add application's root control to the page
     page.add(calc)
 
 
