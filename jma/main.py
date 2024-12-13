@@ -1,200 +1,155 @@
 import flet as ft
 import requests
 import json
-import logging
-
-# デバッグログの設定
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from datetime import datetime
 
 class WeatherApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.page.title = "天気予報アプリ"
+        self.page.title = "日本の天気予報"
         self.page.window_width = 800
-        self.page.window_height = 600
-
-        # 最新のAPIエンドポイント
+        self.page.window_height = 800
+        
+        # URLs
         self.AREAS_URL = "https://www.jma.go.jp/bosai/common/const/area.json"
         self.FORECAST_BASE_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/"
-
-        # 状態変数
-        self.areas = {}
-        self.selected_area_code = None
-
-        # UIコンポーネントの作成
-        self.rail = self._create_navigation_rail()
-        self.area_dropdown = self._create_area_dropdown()
-        self.forecast_display = self._create_forecast_display()
-
-        # 初期セットアップ
-        self._load_areas()
-        self._setup_layout()
-
-    def _load_areas(self):
-        """地域リストをAPIから読み込む"""
+        
+        # UI Components
+        self.area_dropdown = ft.Dropdown(
+            width=400,
+            label="地域を選択してください",
+            on_change=self.on_area_selected
+        )
+        
+        self.weather_display = ft.Column(
+            controls=[
+                ft.Text("天気予報", size=24, weight=ft.FontWeight.BOLD),
+                ft.Text("地域を選択してください", size=16),
+            ],
+            scroll=ft.ScrollMode.AUTO,
+        )
+        
+        self.setup_page()
+        self.load_areas()
+    
+    def setup_page(self):
+        self.page.add(
+            ft.Container(
+                content=ft.Column([
+                    ft.Row([self.area_dropdown], alignment=ft.MainAxisAlignment.CENTER),
+                    self.weather_display
+                ]),
+                padding=20
+            )
+        )
+    
+    def format_date(self, dt_str):
+        dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+        return dt.strftime('%Y年%m月%d日')
+    
+    def load_areas(self):
         try:
             response = requests.get(self.AREAS_URL)
-            response.raise_for_status()
-            all_areas = response.json()
+            areas_data = response.json()
             
-            # デバッグ用：全地域コードと地域名を出力
-            logger.info("利用可能な地域コード:")
-            for code, area in all_areas['offices'].items():
-                logger.info(f"コード: {code}, 地域名: {area['name']}")
-            
-            # 地域リストの作成
-            self.areas = {
-                code: area['name'] 
-                for code, area in all_areas['offices'].items()
-            }
-            
-            # ドロップダウンの更新
             self.area_dropdown.options = [
-                ft.dropdown.Option(key=code, text=name) 
-                for code, name in self.areas.items()
+                ft.dropdown.Option(
+                    key=code,
+                    text=f"{data['name']} ({data['officeName']})"
+                )
+                for code, data in areas_data['offices'].items()
             ]
+            
+            self.area_dropdown.options.sort(key=lambda x: x.text)
+            self.page.update()
+            
         except Exception as e:
-            logger.error(f"地域リストの読み込みに失敗しました: {e}")
-            self.forecast_display.controls[0].value = f"エラー: {e}"
-            self.forecast_display.update()
+            print(f"地域データ読み込みエラー: {e}")
+            self.weather_display.controls = [
+                ft.Text("地域データの読み込みに失敗しました", color="red")
+            ]
+            self.page.update()
+    
+    def create_daily_forecast_container(self, date, forecasts):
+        return ft.Container(
+            content=ft.Column([
+                ft.Text(date, size=18, weight=ft.FontWeight.BOLD),
+                *forecasts
+            ]),
+            padding=10,
+            border=ft.border.all(1, ft.colors.GREY_400),
+            border_radius=10,
+            margin=ft.margin.only(top=10)
+        )
 
-    def _fetch_forecast(self, area_code):
-        """指定された地域の天気予報を取得"""
+    def on_area_selected(self, e):
+        selected_code = e.control.value
+        if not selected_code:
+            return
+        
         try:
-            # 完全なURLをログに出力
-            url = f"{self.FORECAST_BASE_URL}{area_code}.json"
-            logger.info(f"フォーキャストURL: {url}")
-
-            response = requests.get(url)
-            logger.info(f"ステータスコード: {response.status_code}")
-            logger.info(f"レスポンスヘッダー: {response.headers}")
-
-            response.raise_for_status()
+            forecast_url = f"{self.FORECAST_BASE_URL}{selected_code}.json"
+            response = requests.get(forecast_url)
             forecast_data = response.json()
-
-            # デバッグ用：JSONデータの詳細出力
-            logger.info("APIレスポンス:")
-            logger.info(json.dumps(forecast_data, indent=2, ensure_ascii=False))
-
-            forecast_text = self._format_forecast(forecast_data)
             
-            self.forecast_display.controls[0].value = forecast_text
-            self.forecast_display.update()
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"リクエストエラー: {e}")
-            self.forecast_display.controls[0].value = f"通信エラー: {e}"
-            self.forecast_display.update()
-
-    def _format_forecast(self, forecast_data):
-        """予報データを読みやすいテキストに整形"""
-        try:
-            # データの存在と形式を確認
-            if not forecast_data or not isinstance(forecast_data, list):
-                return "予報データの形式が異常です"
-
-            # 最初のデータセットを使用
-            area_forecast = forecast_data[0]
-            
-            # レポート名の取得
-            location = area_forecast.get('reportName', '不明な地域')
-            
-            # 時系列データの抽出
-            time_series = area_forecast.get('timeSeries', [])
-            if not time_series:
-                return "予報データに時系列情報がありません"
-
-            # 予報テキストの作成
-            forecast_text = f"地域: {location}\n\n天気予報:\n"
-            
-            # 最初の時系列から天気情報を抽出
-            first_time_series = time_series[0]
-            areas = first_time_series.get('areas', [])
-            
-            if areas:
-                first_area = areas[0]
-                weathers = first_area.get('weathers', [])
-                
-                for i, weather in enumerate(weathers, 1):
-                    forecast_text += f"第{i}期間: {weather}\n"
-            
-            # 気温情報の抽出（存在する場合）
-            if len(time_series) > 2:
-                temp_series = time_series[2]
-                temp_areas = temp_series.get('areas', [])
-                
-                if temp_areas:
-                    first_temp_area = temp_areas[0]
-                    temps = first_temp_area.get('temps', [])
-                    
-                    forecast_text += "\n気温:\n"
-                    for i, temp in enumerate(temps, 1):
-                        forecast_text += f"第{i}期間: {temp}°C\n"
-            
-            return forecast_text
-
-        except Exception as e:
-            logger.error(f"予報情報の解析に失敗しました: {e}")
-            return f"予報情報の解析に失敗しました: {e}"
-
-    def _create_navigation_rail(self):
-        """ナビゲーションレールの作成"""
-        return ft.NavigationRail(
-            selected_index=0,
-            label_type=ft.NavigationRailLabelType.ALL,
-            min_width=100,
-            min_extended_width=200,
-            destinations=[
-                ft.NavigationRailDestination(
-                    icon=ft.icons.HOME_OUTLINED,
-                    selected_icon=ft.icons.HOME,
-                    label="天気予報"
-                ),
-                ft.NavigationRailDestination(
-                    icon=ft.icons.SETTINGS_OUTLINED,
-                    selected_icon=ft.icons.SETTINGS,
-                    label="設定"
-                ),
+            # 表示をクリア
+            self.weather_display.controls = [
+                ft.Text("天気予報", size=24, weight=ft.FontWeight.BOLD),
+                ft.Text(f"選択地域: {e.control.options[e.control.options.index(next(opt for opt in e.control.options if opt.key == selected_code))].text}",
+                       size=18, weight=ft.FontWeight.BOLD)
             ]
-        )
-
-    def _create_area_dropdown(self):
-        """地域選択ドロップダウンの作成"""
-        dropdown = ft.Dropdown(
-            width=300,
-            hint_text="地域を選択",
-            on_change=self._on_area_select
-        )
-        return dropdown
-
-    def _create_forecast_display(self):
-        """天気予報表示エリアの作成"""
-        return ft.Column([
-            ft.Text("地域を選択してください", size=16),
-        ])
-
-    def _on_area_select(self, e):
-        """地域選択イベントの処理"""
-        self.selected_area_code = e.control.value
-        if self.selected_area_code:
-            self._fetch_forecast(self.selected_area_code)
-
-    def _setup_layout(self):
-        """メインアプリケーションレイアウトの設定"""
-        self.page.add(
-            ft.Row([
-                self.rail,
-                ft.VerticalDivider(width=1),
-                ft.Column([
-                    ft.Text("地域を選択", size=20, weight=ft.FontWeight.BOLD),
-                    self.area_dropdown,
-                    self.forecast_display
-                ], expand=True),
-            ], expand=True)
-        )
+            
+            # 日付ごとの予報データを格納する辞書
+            daily_forecasts = {}
+            
+            # 予報データの処理
+            for report in forecast_data:
+                for time_series in report['timeSeries']:
+                    if 'areas' in time_series and time_series['areas']:
+                        area = time_series['areas'][0]
+                        time_defines = [self.format_date(td) for td in time_series['timeDefines']]
+                        
+                        for i, date_str in enumerate(time_defines):
+                            if date_str not in daily_forecasts:
+                                daily_forecasts[date_str] = []
+                            
+                            forecast_info = []
+                            
+                            # 天気の情報
+                            if 'weathers' in area and i < len(area['weathers']):
+                                forecast_info.append(f"天気: {area['weathers'][i]}")
+                            
+                            # 風の情報
+                            if 'winds' in area and i < len(area['winds']):
+                                forecast_info.append(f"風: {area['winds'][i]}")
+                            
+                            # 波の情報
+                            if 'waves' in area and i < len(area['waves']):
+                                forecast_info.append(f"波: {area['waves'][i]}")
+                            
+                            if forecast_info:
+                                daily_forecasts[date_str].append(
+                                    ft.Text(f"{' / '.join(forecast_info)}")
+                                )
+            
+            # 日付ごとにまとめて表示
+            for date, forecasts in sorted(daily_forecasts.items()):
+                if forecasts:  # 予報がある場合のみ表示
+                    self.weather_display.controls.append(
+                        self.create_daily_forecast_container(date, forecasts)
+                    )
+            
+            self.page.update()
+            
+        except Exception as e:
+            print(f"天気予報取得エラー: {e}")
+            self.weather_display.controls = [
+                ft.Text("天気予報の取得に失敗しました", color="red")
+            ]
+            self.page.update()
 
 def main(page: ft.Page):
+    page.title = "天気予報アプリ"
     WeatherApp(page)
 
-ft.app(main)
+ft.app(target=main)
