@@ -152,3 +152,49 @@ if not df.empty:
         print(f"Error processing final data: {e}")
 else:
     print("No data was collected")
+
+import sqlite3
+import pandas as pd
+
+# SQLiteデータベースへの接続（ファイルが存在しない場合は新規作成される）
+def save_to_sqlite(df, db_name='suumo_properties.db', table_name='properties'):
+    try:
+        # データベースに接続
+        conn = sqlite3.connect(db_name)
+        cursor = conn.cursor()
+
+        # テーブルを作成（存在しない場合のみ）
+        create_table_query = f'''
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            building_name TEXT,
+            station_distance TEXT,
+            rent REAL,
+            floor_plan TEXT,
+            size REAL
+        )
+        '''
+        cursor.execute(create_table_query)
+
+        # データフレームの列名をデータベースの列名に対応させる
+        df = df.rename(columns={
+            '建物名': 'building_name',
+            '駅からの距離': 'station_distance',
+            '家賃': 'rent',
+            '間取り': 'floor_plan',
+            '面積': 'size'
+        })
+
+        # データフレームをSQLiteテーブルに挿入
+        df.to_sql(table_name, conn, if_exists='append', index=False)
+
+        # コミットして接続を閉じる
+        conn.commit()
+        conn.close()
+
+        print(f"Data successfully saved to {db_name}, table: {table_name}")
+    except Exception as e:
+        print(f"Error saving to SQLite: {e}")
+
+# フィルタリング後のデータフレームをデータベースに保存
+save_to_sqlite(df)
